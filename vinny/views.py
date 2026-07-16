@@ -60,7 +60,7 @@ import boto3
 from rest_framework import exceptions, generics, authentication, viewsets, mixins, status as rest_status
 from rest_framework.permissions import IsAdminUser, IsAuthenticated, BasePermission
 from rest_framework.authtoken.views import ObtainAuthToken
-from rest_framework.parsers import JSONParser
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.throttling import UserRateThrottle
 from vinny.serializers import (
@@ -4603,11 +4603,157 @@ class PendingUserPermission(BasePermission):
 
 class CommVulReportAPIView(generics.GenericAPIView):
     throttle_classes = [UserRateThrottle]
+    parser_classes = [JSONParser, FormParser, MultiPartParser]
+
+    @staticmethod
+    def _get_nested_value(data, path, default=""):
+        current = data
+        for key in path:
+            if isinstance(key, int):
+                if not isinstance(current, list) or len(current) <= key:
+                    return default
+                current = current[key]
+                continue
+            if not isinstance(current, dict):
+                return default
+            if key not in current:
+                return default
+            current = current[key]
+        return current
+
+    @staticmethod
+    def _parse_date(iso_date):
+        if not iso_date:
+            return ""
+        try:
+            return parse(str(iso_date)).date().isoformat()
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _coerce_choice_bool(value):
+        return "True" if bool(value) else "False"
+
+    @classmethod
+    def _map_csaf_to_form_data(cls, csaf):
+        vulnerabilities = csaf.get("vulnerabilities") if isinstance(csaf, dict) else []
+        vulnerability = vulnerabilities[0] if vulnerabilities and isinstance(vulnerabilities[0], dict) else {}
+        notes = vulnerability.get("notes") if isinstance(vulnerability.get("notes"), list) else []
+        threats = vulnerability.get("threats") if isinstance(vulnerability.get("threats"), list) else []
+        involvements = vulnerability.get("involvements") if isinstance(vulnerability.get("involvements"), list) else []
+        references = vulnerability.get("references") if isinstance(vulnerability.get("references"), list) else []
+        metrics = vulnerability.get("metrics") if isinstance(vulnerability.get("metrics"), list) else []
+        x_extensions = csaf.get("x_extensions") if isinstance(csaf, dict) else []
+        x_extension_content = (
+            x_extensions[0].get("content", {}) if x_extensions and isinstance(x_extensions[0], dict) else {}
+        )
+
+        description_note = next((n for n in notes if isinstance(n, dict) and n.get("category") == "description"), {})
+        discovery_note = next(
+            (n for n in notes if isinstance(n, dict) and n.get("title") == "Vulnerability Discovery Method"), {}
+        )
+        if not discovery_note and len(notes) > 1:
+            discovery_note = notes[1] if isinstance(notes[1], dict) else {}
+
+        inv0 = involvements[0] if len(involvements) > 0 and isinstance(involvements[0], dict) else {}
+        inv1 = involvements[1] if len(involvements) > 1 and isinstance(involvements[1], dict) else {}
+
+        comm_attempt = inv0.get("status") == "contact_attempted"
+        no_attempt_summary = (inv0.get("summary") or "").strip()
+        why_no_attempt = ""
+        please_explain = ""
+        if not comm_attempt:
+            if no_attempt_summary == "I have not attempted to contact any vendors":
+                why_no_attempt = "1"
+            elif no_attempt_summary == "I have been unable to find contact information for a vendor":
+                why_no_attempt = "2"
+            elif no_attempt_summary:
+                why_no_attempt = "3"
+                please_explain = no_attempt_summary
+
+        disclosure_plans = (inv1.get("summary") or "").strip()
+        vul_disclose = inv1.get("status") == "open" and bool(disclosure_plans)
+
+        public_references = [
+            ref.get("url")
+            for ref in references
+            if isinstance(ref, dict) and ref.get("url") and "public" in (ref.get("summary", "").lower())
+        ]
+        exploit_references = [
+            ref.get("url")
+            for ref in references
+            if isinstance(ref, dict) and ref.get("url") and "exploit" in (ref.get("summary", "").lower())
+        ]
+
+        namespace = cls._get_nested_value(csaf, ["document", "publisher", "namespace"], "")
+        if isinstance(namespace, str) and namespace.startswith("mailto:"):
+            contact_email = namespace.replace("mailto:", "", 1)
+        else:
+            contact_email = namespace if isinstance(namespace, str) else ""
+
+        has_ssvc = bool(
+            metrics
+            and isinstance(metrics[0], dict)
+            and isinstance(metrics[0].get("content"), dict)
+            and metrics[0]["content"].get("ssvc_v2")
+        )
+
+        return {
+            "contact_name": cls._get_nested_value(csaf, ["document", "publisher", "name"], ""),
+            "contact_org": cls._get_nested_value(csaf, ["document", "publisher", "issuing_authority"], ""),
+            "contact_email": contact_email,
+            "vendor_name": cls._get_nested_value(csaf, ["product_tree", "branches", 0, "name"], ""),
+            "product_name": cls._get_nested_value(csaf, ["product_tree", "branches", 0, "branches", 0, "product", "name"], ""),
+            "product_version": cls._get_nested_value(csaf, ["product_tree", "branches", 0, "branches", 0, "name"], ""),
+            "vul_description": description_note.get("text") or vulnerability.get("title", ""),
+            "vul_discovery": discovery_note.get("text", ""),
+            "vul_exploit": cls._get_nested_value(threats, [0, "details"], ""),
+            "vul_impact": cls._get_nested_value(threats, [1, "details"], ""),
+            "comm_attempt": cls._coerce_choice_bool(comm_attempt),
+            "vendor_communication": inv0.get("summary", "") if comm_attempt else "",
+            "first_contact": cls._parse_date(inv0.get("date")) if comm_attempt else "",
+            "why_no_attempt": why_no_attempt,
+            "please_explain": please_explain,
+            "vul_disclose": cls._coerce_choice_bool(vul_disclose),
+            "disclosure_plans": disclosure_plans if vul_disclose else "",
+            "vul_public": cls._coerce_choice_bool(bool(public_references)),
+            "public_references": "\n".join(public_references),
+            "vul_exploited": cls._coerce_choice_bool(has_ssvc),
+            "exploit_references": "\n".join(exploit_references),
+            "ics_impact": bool(x_extension_content.get("ics_impact", False)),
+            "ai_ml_system": bool(x_extension_content.get("ai_ml_system", False) or x_extension_content.get("ai/ml", False)),
+            "share_release": cls._coerce_choice_bool(bool(x_extension_content.get("share_contact_with_vendor", False))),
+            "multiplevendors": cls._coerce_choice_bool(bool(x_extension_content.get("multiple_vendors_impacted", False))),
+            "other_vendors": "\n".join(x_extension_content.get("multiple_vendors") or []),
+            "tracking": x_extension_content.get("Tracking_IDs", ""),
+            "comments": x_extension_content.get("private_comments", ""),
+            "credit_release": cls._coerce_choice_bool(
+                bool(cls._get_nested_value(csaf, ["document", "acknowledgments"], []))
+            ),
+        }
 
     def post(self, request, *args, **kwargs):
+        content_type = request.content_type or ""
+        is_json_csaf = content_type.startswith("application/json")
+        multipart_csaf = None
+
+        form_data = request.POST
+        try:
+            if is_json_csaf:
+                form_data = self._map_csaf_to_form_data(request.data)
+            else:
+                multipart_csaf = request.data.get("csaf") if hasattr(request, "data") else None
+            if multipart_csaf:
+                if isinstance(multipart_csaf, dict):
+                    csaf_json = multipart_csaf
+                else:
+                    csaf_json = json.loads(multipart_csaf)
+                form_data = self._map_csaf_to_form_data(csaf_json)
+        except (exceptions.ParseError, TypeError, ValueError, json.JSONDecodeError):
+            return JsonResponse({"errors": {"csaf": ["Malformed CSAF JSON."]}, "status": "error"}, status=400)
 
         form = CaseRequestForm(
-            data=request.POST,
+            data=form_data,
             files=request.FILES
         )
 
