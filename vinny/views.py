@@ -4756,12 +4756,12 @@ class CommVulReportAPIView(generics.GenericAPIView):
         public_references = [
             ref.get("url")
             for ref in references
-            if isinstance(ref, dict) and ref.get("url") and "public" in (ref.get("summary", "").lower())
+            if isinstance(ref, dict) and ref.get("url") and "publicly known references" in (ref.get("summary", "").lower())
         ]
         exploit_references = [
             ref.get("url")
             for ref in references
-            if isinstance(ref, dict) and ref.get("url") and "exploit" in (ref.get("summary", "").lower())
+            if isinstance(ref, dict) and ref.get("url") and "publicy exploited references" in (ref.get("summary", "").lower())
         ]
 
         namespace = cls._get_nested_value(csaf, ["document", "publisher", "namespace"], "")
