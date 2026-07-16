@@ -113,7 +113,10 @@ class CommVulReportAPIViewTests(SimpleTestCase):
                         {"category": "description", "text": "Description from note"},
                         {"title": "Vulnerability Discovery Method", "text": "Discovery text"},
                     ],
-                    "threats": [{"details": "Exploit details"}, {"details": "Impact details"}],
+                    "threats": [
+                        {"category": "impact", "details": "Impact details"},
+                        {"category": "exploit_status", "details": "Exploit details"},
+                    ],
                     "involvements": [
                         {
                             "status": "contact_attempted",
@@ -189,6 +192,8 @@ class CommVulReportAPIViewTests(SimpleTestCase):
         self.assertEqual(mapped_data["comm_attempt"], "True")
         self.assertEqual(mapped_data["vendor_communication"], "Reached out to vendor")
         self.assertEqual(mapped_data["disclosure_plans"], "Public disclosure timeline")
+        self.assertEqual(mapped_data["vul_exploit"], "Exploit details")
+        self.assertEqual(mapped_data["vul_impact"], "Impact details")
 
     @patch("vinny.views.get_template", return_value=_MockTemplate())
     @patch("vinny.views.send_sns_json")

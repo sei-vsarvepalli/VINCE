@@ -4733,6 +4733,14 @@ class CommVulReportAPIView(generics.GenericAPIView):
             ),
             {},
         )
+        exploit_threat = next(
+            (threat for threat in threats if isinstance(threat, dict) and threat.get("category") == "exploit_status"),
+            {},
+        )
+        impact_threat = next(
+            (threat for threat in threats if isinstance(threat, dict) and threat.get("category") == "impact"),
+            {},
+        )
 
         comm_attempt = bool(contact_attempt_involvement)
         first_contact = cls._parse_date(
@@ -4790,8 +4798,8 @@ class CommVulReportAPIView(generics.GenericAPIView):
             "product_version": product_tree_fields["product_version"],
             "vul_description": description_note.get("text") or vulnerability.get("title", ""),
             "vul_discovery": discovery_note.get("text", ""),
-            "vul_exploit": cls._get_nested_value(threats, [0, "details"], ""),
-            "vul_impact": cls._get_nested_value(threats, [1, "details"], ""),
+            "vul_exploit": exploit_threat.get("details", ""),
+            "vul_impact": impact_threat.get("details", ""),
             "comm_attempt": cls._coerce_choice_bool(comm_attempt),
             "vendor_communication": contact_attempt_involvement.get("summary", "") if comm_attempt else "",
             "first_contact": first_contact if comm_attempt else "",
