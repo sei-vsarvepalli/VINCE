@@ -4705,11 +4705,35 @@ class CommVulReportAPIView(generics.GenericAPIView):
         if not discovery_note and len(notes) > 1:
             discovery_note = notes[1] if isinstance(notes[1], dict) else {}
 
-        inv0 = involvements[0] if len(involvements) > 0 and isinstance(involvements[0], dict) else {}
-        inv1 = involvements[1] if len(involvements) > 1 and isinstance(involvements[1], dict) else {}
+        contact_attempt_involvement = next(
+            (
+                involvement
+                for involvement in involvements
+                if isinstance(involvement, dict) and involvement.get("status") == "contact_attempted"
+            ),
+            {},
+        )
+        no_contact_involvement = next(
+            (
+                involvement
+                for involvement in involvements
+                if isinstance(involvement, dict) and involvement.get("status") == "not_contacted"
+            ),
+            {},
+        )
+        disclosure_involvement = next(
+            (
+                involvement
+                for involvement in involvements
+                if isinstance(involvement, dict)
+                and involvement.get("status") == "open"
+                and involvement.get("party") == "discoverer"
+            ),
+            {},
+        )
 
-        comm_attempt = inv0.get("status") == "contact_attempted"
-        no_attempt_summary = (inv0.get("summary") or "").strip()
+        comm_attempt = bool(contact_attempt_involvement)
+        no_attempt_summary = (no_contact_involvement.get("summary") or "").strip()
         why_no_attempt = ""
         please_explain = ""
         if not comm_attempt:
@@ -4721,8 +4745,8 @@ class CommVulReportAPIView(generics.GenericAPIView):
                 why_no_attempt = "3"
                 please_explain = no_attempt_summary
 
-        disclosure_plans = (inv1.get("summary") or "").strip()
-        vul_disclose = inv1.get("status") == "open" and bool(disclosure_plans)
+        disclosure_plans = (disclosure_involvement.get("summary") or "").strip()
+        vul_disclose = bool(disclosure_plans)
 
         public_references = [
             ref.get("url")
@@ -4764,8 +4788,8 @@ class CommVulReportAPIView(generics.GenericAPIView):
             "vul_exploit": cls._get_nested_value(threats, [0, "details"], ""),
             "vul_impact": cls._get_nested_value(threats, [1, "details"], ""),
             "comm_attempt": cls._coerce_choice_bool(comm_attempt),
-            "vendor_communication": inv0.get("summary", "") if comm_attempt else "",
-            "first_contact": cls._parse_date(inv0.get("date")) if comm_attempt else "",
+            "vendor_communication": contact_attempt_involvement.get("summary", "") if comm_attempt else "",
+            "first_contact": cls._parse_date(contact_attempt_involvement.get("date")) if comm_attempt else "",
             "why_no_attempt": why_no_attempt,
             "please_explain": please_explain,
             "vul_disclose": cls._coerce_choice_bool(vul_disclose),

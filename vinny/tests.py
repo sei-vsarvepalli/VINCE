@@ -120,7 +120,7 @@ class CommVulReportAPIViewTests(SimpleTestCase):
                             "summary": "Reached out to vendor",
                             "date": "2026-01-01T00:00:00Z",
                         },
-                        {"status": "open", "summary": "Public disclosure timeline"},
+                        {"status": "open", "party": "discoverer", "summary": "Public disclosure timeline"},
                     ],
                     "references": [
                         {"summary": "Publicly known reference", "url": "https://example.com/public"},
@@ -186,6 +186,64 @@ class CommVulReportAPIViewTests(SimpleTestCase):
         self.assertEqual(mapped_data["product_name"], "Product A")
         self.assertEqual(mapped_data["product_version"], "1.2.3,2.0.0")
         self.assertEqual(mapped_data["multiplevendors"], "True")
+        self.assertEqual(mapped_data["comm_attempt"], "True")
+        self.assertEqual(mapped_data["vendor_communication"], "Reached out to vendor")
+        self.assertEqual(mapped_data["disclosure_plans"], "Public disclosure timeline")
+
+    @patch("vinny.views.get_template", return_value=_MockTemplate())
+    @patch("vinny.views.send_sns_json")
+    @patch("vinny.views.send_sns")
+    @patch("vinny.views.create_record_of_API_access")
+    @patch("vinny.views.get_vrf_id", return_value="12345")
+    @patch("vinny.views.boto3.client")
+    @patch("vinny.views.CaseRequestForm.save")
+    def test_application_json_csaf_involvements_order_independent(
+        self,
+        mock_form_save,
+        mock_boto_client,
+        mock_get_vrf_id,
+        mock_record_access,
+        mock_send_sns,
+        mock_send_sns_json,
+        mock_get_template,
+    ):
+        mock_boto_client.side_effect = self._mock_boto_client
+        mock_form_save.side_effect = lambda *args, **kwargs: _MockCaseRequest()
+
+        payload = json.loads(json.dumps(self.csaf_payload))
+        payload["vulnerabilities"][0]["involvements"] = [
+            {
+                "status": "not_contacted",
+                "summary": "I have not attempted to contact any vendors",
+            },
+            {
+                "status": "open",
+                "party": "vendor",
+                "summary": "Vendor internal review",
+            },
+            {
+                "status": "contact_attempted",
+                "summary": "Reached out later",
+                "date": "2026-02-01T00:00:00Z",
+            },
+            {
+                "status": "open",
+                "party": "discoverer",
+                "summary": "Discoverer disclosure plan",
+            },
+        ]
+        request = self.factory.post(self.url, data=payload, format="json")
+        force_authenticate(request, user=self.user)
+
+        response = self.view(request)
+        payload = json.loads(response.content)
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(payload["status"], "success")
+        mapped_data = mock_form_save.call_args[0][0].cleaned_data
+        self.assertEqual(mapped_data["comm_attempt"], "True")
+        self.assertEqual(mapped_data["vendor_communication"], "Reached out later")
+        self.assertEqual(mapped_data["disclosure_plans"], "Discoverer disclosure plan")
 
     @patch("vinny.views.get_template", return_value=_MockTemplate())
     @patch("vinny.views.send_sns_json")
