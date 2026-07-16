@@ -83,8 +83,26 @@ class CommVulReportAPIViewTests(SimpleTestCase):
             "product_tree": {
                 "branches": [
                     {
+                        "category": "vendor",
                         "name": "Vendor A",
-                        "branches": [{"name": "1.2.3", "product": {"name": "Product A"}}],
+                        "branches": [
+                            {
+                                "category": "product_name",
+                                "name": "Product A",
+                                "branches": [{"category": "product_version", "name": "1.2.3"}],
+                            }
+                        ],
+                    },
+                    {
+                        "category": "vendor",
+                        "name": "Vendor B",
+                        "branches": [
+                            {
+                                "category": "product_name",
+                                "name": "Product B",
+                                "branches": [{"category": "product_version", "name": "2.0.0"}],
+                            }
+                        ],
                     }
                 ]
             },
@@ -117,8 +135,8 @@ class CommVulReportAPIViewTests(SimpleTestCase):
                         "ics_impact": True,
                         "ai_ml_system": True,
                         "share_contact_with_vendor": True,
-                        "multiple_vendors_impacted": True,
-                        "multiple_vendors": ["Vendor B", "Vendor C"],
+                        "multiple_vendors_impacted": False,
+                        "multiple_vendors": ["Vendor C"],
                         "Tracking_IDs": "VU#123456",
                         "private_comments": "Private note",
                     }
@@ -162,6 +180,12 @@ class CommVulReportAPIViewTests(SimpleTestCase):
         self.assertEqual(response.status_code, 201)
         self.assertEqual(payload["status"], "success")
         self.assertTrue(payload["vrf_id"].endswith("12345"))
+        mapped_data = mock_form_save.call_args[0][0].cleaned_data
+        self.assertEqual(mapped_data["vendor_name"], "Vendor A")
+        self.assertEqual(mapped_data["other_vendors"], "Vendor B")
+        self.assertEqual(mapped_data["product_name"], "Product A")
+        self.assertEqual(mapped_data["product_version"], "1.2.3,2.0.0")
+        self.assertEqual(mapped_data["multiplevendors"], "True")
 
     @patch("vinny.views.get_template", return_value=_MockTemplate())
     @patch("vinny.views.send_sns_json")
@@ -209,6 +233,23 @@ class CommVulReportAPIViewTests(SimpleTestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("csaf", payload["errors"])
+
+    def test_csaf_missing_product_tree_categories_returns_400(self):
+        invalid_payload = {
+            **self.csaf_payload,
+            "product_tree": {"branches": [{"category": "vendor", "name": "Vendor A"}]},
+        }
+        request = self.factory.post(self.url, data=invalid_payload, format="json")
+        force_authenticate(request, user=self.user)
+
+        response = self.view(request)
+        payload = json.loads(response.content)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            payload["errors"]["csaf"][0],
+            "At least one value for vendor, product_name, and product_version is required.",
+        )
 
     @patch("vinny.views.get_template", return_value=_MockTemplate())
     @patch("vinny.views.send_sns_json")

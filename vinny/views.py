@@ -4634,6 +4634,56 @@ class CommVulReportAPIView(generics.GenericAPIView):
     def _coerce_choice_bool(value):
         return "True" if bool(value) else "False"
 
+    @staticmethod
+    def _append_unique(values, value):
+        if not isinstance(value, str):
+            return
+        normalized = value.strip()
+        if normalized and normalized not in values:
+            values.append(normalized)
+
+    @classmethod
+    def _extract_product_tree_fields(cls, csaf):
+        vendors = []
+        product_names = []
+        product_versions = []
+
+        def _walk_branches(node):
+            if isinstance(node, list):
+                for item in node:
+                    _walk_branches(item)
+                return
+
+            if not isinstance(node, dict):
+                return
+
+            category = node.get("category")
+            name = node.get("name")
+            if category == "vendor":
+                cls._append_unique(vendors, name)
+            elif category == "product_name":
+                cls._append_unique(product_names, name)
+            elif category == "product_version":
+                cls._append_unique(product_versions, name)
+
+            _walk_branches(node.get("branches"))
+
+        _walk_branches(cls._get_nested_value(csaf, ["product_tree", "branches"], []))
+
+        if not (vendors and product_names and product_versions):
+            raise ValidationError(
+                {"csaf": ["At least one value for vendor, product_name, and product_version is required."]}
+            )
+
+        has_multiple_vendors = len(vendors) > 1
+        return {
+            "vendor_name": vendors[0],
+            "product_name": product_names[0],
+            "product_version": ",".join(product_versions),
+            "multiplevendors": has_multiple_vendors,
+            "other_vendors": "\n".join(vendors[1:]) if has_multiple_vendors else "",
+        }
+
     @classmethod
     def _map_csaf_to_form_data(cls, csaf):
         vulnerabilities = csaf.get("vulnerabilities") if isinstance(csaf, dict) else []
@@ -4697,14 +4747,18 @@ class CommVulReportAPIView(generics.GenericAPIView):
             and isinstance(metrics[0].get("content"), dict)
             and metrics[0]["content"].get("ssvc_v2")
         )
+        product_tree_fields = cls._extract_product_tree_fields(csaf)
+        multiplevendors_from_extension = bool(x_extension_content.get("multiple_vendors_impacted", False))
+        extension_other_vendors = "\n".join(x_extension_content.get("multiple_vendors") or [])
+        has_multiple_vendors = product_tree_fields["multiplevendors"] or multiplevendors_from_extension
 
         return {
             "contact_name": cls._get_nested_value(csaf, ["document", "publisher", "name"], ""),
             "contact_org": cls._get_nested_value(csaf, ["document", "publisher", "issuing_authority"], ""),
             "contact_email": contact_email,
-            "vendor_name": cls._get_nested_value(csaf, ["product_tree", "branches", 0, "name"], ""),
-            "product_name": cls._get_nested_value(csaf, ["product_tree", "branches", 0, "branches", 0, "product", "name"], ""),
-            "product_version": cls._get_nested_value(csaf, ["product_tree", "branches", 0, "branches", 0, "name"], ""),
+            "vendor_name": product_tree_fields["vendor_name"],
+            "product_name": product_tree_fields["product_name"],
+            "product_version": product_tree_fields["product_version"],
             "vul_description": description_note.get("text") or vulnerability.get("title", ""),
             "vul_discovery": discovery_note.get("text", ""),
             "vul_exploit": cls._get_nested_value(threats, [0, "details"], ""),
@@ -4723,8 +4777,8 @@ class CommVulReportAPIView(generics.GenericAPIView):
             "ics_impact": bool(x_extension_content.get("ics_impact", False)),
             "ai_ml_system": bool(x_extension_content.get("ai_ml_system", False) or x_extension_content.get("ai/ml", False)),
             "share_release": cls._coerce_choice_bool(bool(x_extension_content.get("share_contact_with_vendor", False))),
-            "multiplevendors": cls._coerce_choice_bool(bool(x_extension_content.get("multiple_vendors_impacted", False))),
-            "other_vendors": "\n".join(x_extension_content.get("multiple_vendors") or []),
+            "multiplevendors": cls._coerce_choice_bool(has_multiple_vendors),
+            "other_vendors": product_tree_fields["other_vendors"] if product_tree_fields["multiplevendors"] else extension_other_vendors,
             "tracking": x_extension_content.get("Tracking_IDs", ""),
             "comments": x_extension_content.get("private_comments", ""),
             "credit_release": cls._coerce_choice_bool(
@@ -4749,7 +4803,9 @@ class CommVulReportAPIView(generics.GenericAPIView):
                 else:
                     csaf_json = json.loads(multipart_csaf)
                 form_data = self._map_csaf_to_form_data(csaf_json)
-        except (exceptions.ParseError, TypeError, ValueError, json.JSONDecodeError):
+        except ValidationError as exc:
+            return JsonResponse({"errors": exc.message_dict, "status": "error"}, status=400)
+        except (exceptions.ParseError, TypeError, json.JSONDecodeError):
             return JsonResponse({"errors": {"csaf": ["Malformed CSAF JSON."]}, "status": "error"}, status=400)
 
         form = CaseRequestForm(
