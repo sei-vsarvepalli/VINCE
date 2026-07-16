@@ -243,7 +243,25 @@ class CommVulReportAPIViewTests(SimpleTestCase):
         mapped_data = mock_form_save.call_args[0][0].cleaned_data
         self.assertEqual(mapped_data["comm_attempt"], "True")
         self.assertEqual(mapped_data["vendor_communication"], "Reached out later")
+        self.assertEqual(mapped_data["first_contact"], "2026-02-01")
         self.assertEqual(mapped_data["disclosure_plans"], "Discoverer disclosure plan")
+
+    def test_contact_attempted_without_date_returns_400(self):
+        payload = json.loads(json.dumps(self.csaf_payload))
+        payload["vulnerabilities"][0]["involvements"] = [
+            {"status": "contact_attempted", "summary": "Reached out to vendor"},
+        ]
+        request = self.factory.post(self.url, data=payload, format="json")
+        force_authenticate(request, user=self.user)
+
+        response = self.view(request)
+        body = json.loads(response.content)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            body["errors"]["csaf"][0],
+            "first_contact date is required when involvement status is contact_attempted.",
+        )
 
     @patch("vinny.views.get_template", return_value=_MockTemplate())
     @patch("vinny.views.send_sns_json")

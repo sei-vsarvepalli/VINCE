@@ -4705,14 +4705,16 @@ class CommVulReportAPIView(generics.GenericAPIView):
         if not discovery_note and len(notes) > 1:
             discovery_note = notes[1] if isinstance(notes[1], dict) else {}
 
-        contact_attempt_involvement = next(
-            (
-                involvement
-                for involvement in involvements
-                if isinstance(involvement, dict) and involvement.get("status") == "contact_attempted"
-            ),
-            {},
-        )
+        contact_attempt_involvements = [
+            involvement
+            for involvement in involvements
+            if isinstance(involvement, dict) and involvement.get("status") == "contact_attempted"
+        ]
+        contact_attempt_involvement = contact_attempt_involvements[0] if contact_attempt_involvements else {}
+        if contact_attempt_involvements and any(not involvement.get("date") for involvement in contact_attempt_involvements):
+            raise ValidationError(
+                {"csaf": ["first_contact date is required when involvement status is contact_attempted."]}
+            )
         no_contact_involvement = next(
             (
                 involvement
@@ -4733,6 +4735,9 @@ class CommVulReportAPIView(generics.GenericAPIView):
         )
 
         comm_attempt = bool(contact_attempt_involvement)
+        first_contact = cls._parse_date(
+            next((involvement.get("date") for involvement in contact_attempt_involvements if involvement.get("date")), "")
+        )
         no_attempt_summary = (no_contact_involvement.get("summary") or "").strip()
         why_no_attempt = ""
         please_explain = ""
@@ -4789,7 +4794,7 @@ class CommVulReportAPIView(generics.GenericAPIView):
             "vul_impact": cls._get_nested_value(threats, [1, "details"], ""),
             "comm_attempt": cls._coerce_choice_bool(comm_attempt),
             "vendor_communication": contact_attempt_involvement.get("summary", "") if comm_attempt else "",
-            "first_contact": cls._parse_date(contact_attempt_involvement.get("date")) if comm_attempt else "",
+            "first_contact": first_contact if comm_attempt else "",
             "why_no_attempt": why_no_attempt,
             "please_explain": please_explain,
             "vul_disclose": cls._coerce_choice_bool(vul_disclose),
