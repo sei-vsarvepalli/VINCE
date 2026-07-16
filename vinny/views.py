@@ -4827,11 +4827,13 @@ class CommVulReportAPIView(generics.GenericAPIView):
         content_type = request.content_type or ""
         is_json_csaf = content_type.startswith("application/json")
         multipart_csaf = None
+        submitted_csaf = None
 
         form_data = request.POST
         try:
             if is_json_csaf:
-                form_data = self._map_csaf_to_form_data(request.data)
+                submitted_csaf = request.data
+                form_data = self._map_csaf_to_form_data(submitted_csaf)
             else:
                 multipart_csaf = request.data.get("csaf") if hasattr(request, "data") else None
             if multipart_csaf:
@@ -4839,6 +4841,7 @@ class CommVulReportAPIView(generics.GenericAPIView):
                     csaf_json = multipart_csaf
                 else:
                     csaf_json = json.loads(multipart_csaf)
+                submitted_csaf = csaf_json
                 form_data = self._map_csaf_to_form_data(csaf_json)
         except ValidationError as exc:
             return JsonResponse({"errors": exc.message_dict, "status": "error"}, status=400)
@@ -4859,12 +4862,16 @@ class CommVulReportAPIView(generics.GenericAPIView):
         create_record_of_API_access(self.request.build_absolute_uri(), self.request.user)
         vrf_id = get_vrf_id()
         context = form.cleaned_data
-        if context["ai_ml_system"] == True:
-            context["metadata"] = {"ai_ml_system": True}
-        else:
-            context["metadata"] = {"ai_ml_system": False}
+        metadata = context.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+        metadata.setdefault("ai_ml_system", context["ai_ml_system"])
+        if submitted_csaf is not None:
+            metadata["csaf"] = submitted_csaf
+        context["metadata"] = metadata
         form.instance.vrf_id = vrf_id
         newrequest = form.save(commit=False)
+        newrequest.metadata = metadata
         newrequest.user = self.request.user
         newrequest.save()
         context["vrf_id"] = vrf_id

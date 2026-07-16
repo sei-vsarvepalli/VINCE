@@ -194,6 +194,9 @@ class CommVulReportAPIViewTests(SimpleTestCase):
         self.assertEqual(mapped_data["disclosure_plans"], "Public disclosure timeline")
         self.assertEqual(mapped_data["vul_exploit"], "Exploit details")
         self.assertEqual(mapped_data["vul_impact"], "Impact details")
+        submitted_payload = json.loads(mock_send_sns_json.call_args[0][2])
+        self.assertEqual(submitted_payload["metadata"]["csaf"], self.csaf_payload)
+        self.assertTrue(submitted_payload["metadata"]["ai_ml_system"])
 
     @patch("vinny.views.get_template", return_value=_MockTemplate())
     @patch("vinny.views.send_sns_json")
@@ -304,6 +307,9 @@ class CommVulReportAPIViewTests(SimpleTestCase):
 
         self.assertEqual(response.status_code, 201)
         self.assertEqual(payload["status"], "success")
+        submitted_payload = json.loads(mock_send_sns_json.call_args[0][2])
+        self.assertEqual(submitted_payload["metadata"]["csaf"], self.csaf_payload)
+        self.assertTrue(submitted_payload["metadata"]["ai_ml_system"])
 
     def test_malformed_csaf_json_returns_400(self):
         request = self.factory.post(self.url, data={"csaf": '{"document":'}, format="multipart")
