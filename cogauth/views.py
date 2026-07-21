@@ -1291,7 +1291,11 @@ class LogoutView(CALogoutView):
 
 
 class GetCognitoUserMixin(object):
-    client = boto3.client("apigateway", region_name=settings.COGNITO_REGION, endpoint_url=get_cognito_url())
+    client = (
+        boto3.client("apigateway", region_name=settings.COGNITO_REGION, endpoint_url=get_cognito_url())
+        if settings.COGNITO_REGION
+        else None
+    )
 
     def get_user_object(self):
         cog_client = boto3.client("cognito-idp", endpoint_url=get_cognito_url(), region=settings.COGNITO_REGION)

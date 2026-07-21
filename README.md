@@ -187,6 +187,84 @@ This will create a new database for the tests and will delete it when the tests 
 python3 manage.py test vince -k
 ```
 
+---
+
+## Local auth mode (no AWS/Cognito required)
+
+By default VINCE uses AWS Cognito for authentication.  For **local development
+and automated testing** you can bypass Cognito entirely by setting the
+`AUTH_BACKEND_MODE` environment variable.
+
+### Quick setup
+
+1. Add the following to your `.env` (or export the variable before running the
+   server):
+
+   ```
+   AUTH_BACKEND_MODE=local
+   DEBUG=True
+   ```
+
+2. Run migrations and start the server as usual:
+
+   ```
+   python manage.py migrate
+   python manage.py runserver
+   ```
+
+3. Log in via Django admin or use the optional dev-bootstrap headers described
+   below.
+
+### Dev-bootstrap headers (DEBUG-only)
+
+When `DEBUG=True`, any request may include the following HTTP headers to
+automatically create (or sync) a local user and log in without a password.
+These headers are **ignored in production** (`DEBUG=False`) and must never be
+forwarded by a proxy to a production server.
+
+| Header | Description | Example |
+|--------|-------------|---------|
+| `X-Dev-User` | Username to log in as (required to trigger bootstrap) | `alice` |
+| `X-Dev-Email` | Email address for the user | `alice@example.com` |
+| `X-Dev-Groups` | Comma-separated Django groups to assign | `vince_admin,analyst` |
+
+Example with `curl`:
+
+```bash
+curl http://localhost:8000/vince/auth/whoami/ \
+     -H "X-Dev-User: alice" \
+     -H "X-Dev-Email: alice@example.com" \
+     -H "X-Dev-Groups: vince_admin"
+```
+
+Expected response:
+
+```json
+{
+  "username": "alice",
+  "email": "alice@example.com",
+  "groups": ["vince_admin"]
+}
+```
+
+### Debug endpoint
+
+The `/vince/auth/whoami/` endpoint (available only when `DEBUG=True`) returns
+JSON describing the currently authenticated user.  It is useful for verifying
+that auth is working correctly during local development.
+
+### Running the local-auth smoke tests
+
+```bash
+AUTH_BACKEND_MODE=local DEBUG=True VINCE_DB_SSL_MODE=disable \
+    python manage.py test vince.auth.tests --verbosity=2
+```
+
+### Production default
+
+`AUTH_BACKEND_MODE` defaults to `"cognito"`.  **No changes to existing AWS /
+Cognito deployments are required.**  The new code is purely additive.
+
 ## Fresh deployment reminders
 
 Remember to give the "vince" group access to all of the Ticket Queues in admin console.

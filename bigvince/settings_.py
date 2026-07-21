@@ -68,6 +68,20 @@ if VINCE_DEV_SYSTEM == "1":
 
 LOCALSTACK = os.environ.get("LOCALSTACK")
 
+# ---------------------------------------------------------------------------
+# Auth backend mode
+# ---------------------------------------------------------------------------
+# Set AUTH_BACKEND_MODE=local in .env (or the environment) to bypass Cognito
+# for local development and automated tests.  The production default is
+# "cognito".  Any other value raises a ValueError at startup so
+# misconfigurations are caught early.
+AUTH_BACKEND_MODE = os.getenv("AUTH_BACKEND_MODE", "cognito").lower()
+if AUTH_BACKEND_MODE not in {"cognito", "local"}:
+    raise ValueError(
+        f"Invalid AUTH_BACKEND_MODE={AUTH_BACKEND_MODE!r}. "
+        "Valid choices are 'cognito' (default) and 'local'."
+    )
+
 TERMS_URL = os.environ.get(
     "TERMS_URL", "https://docs.aws.amazon.com/cognito/latest/developerguide/data-protection.html"
 )
@@ -417,7 +431,7 @@ if VINCE_NAMESPACE == "vince":
         "HOST": os.environ.get("VINCE_TRACK_DB_HOST", "localhost"),
         "PORT": os.environ.get("VINCE_TRACK_DB_PORT", 5432),
         "OPTIONS": {
-            "sslmode": "require",
+            "sslmode": os.environ.get("VINCE_DB_SSL_MODE", "require"),
         },
         "CONN_MAX_AGE": int(os.environ.get("DB_CONN_MAX_AGE", "60")),
     }
@@ -482,9 +496,15 @@ if VINCE_NAMESPACE == "vinny":
 
 DATABASE_ROUTERS = ["vince.dbrouter.BigVinceRouter"]
 
-AUTHENTICATION_BACKENDS = [
-    "cogauth.backend.CognitoAuthenticate",
-]
+if AUTH_BACKEND_MODE == "local":
+    # Local mode: plain Django model-based auth, no Cognito dependency.
+    AUTHENTICATION_BACKENDS = [
+        "django.contrib.auth.backends.ModelBackend",
+    ]
+else:
+    AUTHENTICATION_BACKENDS = [
+        "cogauth.backend.CognitoAuthenticate",
+    ]
 
 # Cognito Settings - these can be found in the AWS Cognito Console.
 # The user pool must be setup prior to deploying
