@@ -260,6 +260,24 @@ AUTH_BACKEND_MODE=local DEBUG=True VINCE_DB_SSL_MODE=disable \
     python manage.py test vince.auth.tests --verbosity=2
 ```
 
+### Pull request test workflow
+
+The repository includes `/home/runner/work/VINCE/VINCE/.github/workflows/pr-tests.yml` to run PR checks against `main`.
+
+The workflow expects a GitHub Actions environment named `private` with these secrets:
+
+* `SECRET_KEY`
+* `GOOGLE_RECAPTCHA_SECRET_KEY`
+
+It starts a local PostgreSQL service, creates the VINCE databases, runs migrations, then runs:
+
+```bash
+python manage.py test vince.auth.tests --verbosity=2
+python manage.py test vince --verbosity=2
+```
+
+After the workflow is enabled, add its check in GitHub branch protection so PRs must pass it before merge.
+
 ### Production default
 
 `AUTH_BACKEND_MODE` defaults to `"cognito"`.  **No changes to existing AWS /
