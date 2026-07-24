@@ -48,7 +48,7 @@ class TestEmailNotifications(TestCase):
         get_email()
         r = self.factory.get(f"/vince/ticket/{ticket.id}", {'take': ''}, follow=True)
         r.user = User.objects.get(id=1)
-        r.user.is_superuser = True        
+        r.user.is_superuser = True
         SessionMiddleware(lambda req: None).process_request(r)
         addwatchers(ticket)
         watchers = get_watchers(ticket).all()
@@ -102,7 +102,7 @@ class TestEmailNotifications(TestCase):
         # User 1 (vinceuser) assigning to user 2 (test1)
         r = self.factory.post(f"/vince/ticket/{ticket.id}/update", {'comment': 'New comment'}, follow=True)
         r.user = User.objects.get(id=1)
-        r.user.is_superuser = True        
+        r.user.is_superuser = True
         SessionMiddleware(lambda req: None).process_request(r)
         addwatchers(ticket)
         watchers = get_watchers(ticket).all()
@@ -138,7 +138,7 @@ class TestEmailNotifications(TestCase):
             r = self.factory.post(f"/vince/ticket/{ticket.id}/update",
                                   {'comment': f"new status {status[x]}", 'new_status': status[x]}, follow=True)
             r.user = User.objects.get(id=1)
-            r.user.is_superuser = True            
+            r.user.is_superuser = True
             SessionMiddleware(lambda req: None).process_request(r)
             data = {'ticket_id': ticket.id}
             view = UpdateTicketView.as_view()

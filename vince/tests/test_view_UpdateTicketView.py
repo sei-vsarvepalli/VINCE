@@ -42,12 +42,12 @@ class TestUpdateTicketView(TestCase):
         r = self.factory.post(f"/vince/ticket/{ticket.id}/update", data, follow=True)
         r.user = User.objects.get(id=1)
         is_super = r.user.is_superuser
-        r.user.is_superuser = True    
+        r.user.is_superuser = True
         SessionMiddleware(lambda req: None).process_request(r)
         view = UpdateTicketView.as_view()
         view(r, **data)
         watcher = get_watchers(ticket).all()[0]
-        r.user.is_superuser = is_super        
+        r.user.is_superuser = is_super
         self.assertTrue(r.user == watcher.user)
 
         # Make sure try to subscribe twice doesn't break anything
@@ -104,12 +104,12 @@ class TestUpdateTicketView(TestCase):
         r = self.factory.post(f"/vince/ticket/{ticket.id}/update", data, follow=True)
         r.user = User.objects.get(id=1)
         is_super = r.user.is_superuser
-        r.user.is_superuser = True        
+        r.user.is_superuser = True
         SessionMiddleware(lambda req: None).process_request(r)
         view = UpdateTicketView.as_view()
         view(r, **data)
         watcher = get_watchers(ticket).all()[0]
-        r.user.is_superuser = is_super     
+        r.user.is_superuser = is_super
         self.assertTrue(r.user == watcher.user)
 
 
