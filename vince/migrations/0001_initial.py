@@ -335,6 +335,11 @@ class Migration(migrations.Migration):
                 ('comments', models.TextField(blank=True, null=True)),
                 ('date_submitted', models.DateTimeField(default=django.utils.timezone.now)),
                 ('submission_type', models.CharField(choices=[('email', 'email'), ('web', 'web'), ('manual', 'manual')], default='web', max_length=15)),
+                ('metadata',
+                 vince.models.OldJSONField(
+                     blank=True,
+                     null=True
+                 )),
                 ('vc_id', models.IntegerField(default=0)),
             ],
             bases=('vince.ticket',),

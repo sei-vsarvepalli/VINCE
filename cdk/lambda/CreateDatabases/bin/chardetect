@@ -1,4 +1,4 @@
-#!/Users/dsbeaver/.virtualenvs/aws-cdk/bin/python3.6
+#!/Users/vinceuser/.virtualenvs/aws-cdk/bin/python3.6
 # -*- coding: utf-8 -*-
 import re
 import sys
