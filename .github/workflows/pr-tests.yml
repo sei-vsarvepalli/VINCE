@@ -13,7 +13,6 @@ jobs:
   django-tests:
     name: Django PR tests
     runs-on: ubuntu-latest
-    environment: private
     timeout-minutes: 45
     permissions:
       contents: read
@@ -37,8 +36,8 @@ jobs:
       AUTH_BACKEND_MODE: local
       DEBUG: "True"
       VINCE_DB_SSL_MODE: disable
-      SECRET_KEY: ${{ secrets.SECRET_KEY }}
-      GOOGLE_RECAPTCHA_SECRET_KEY: ${{ secrets.GOOGLE_RECAPTCHA_SECRET_KEY }}
+      # SECRET_KEY and GOOGLE_RECAPTCHA_SECRET_KEY are generated ephemerally
+      # in the "Generate ephemeral test secrets" step below.
       GOOGLE_SITE_KEY: test-site-key
       VINCE_DEV_SYSTEM: "1"
       VINCE_TRACK_DB_HOST: 127.0.0.1
@@ -62,6 +61,13 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Generate ephemeral test secrets
+        run: |
+          # Use Python stdlib (no Django needed yet) to generate a 50-char
+          # URL-safe random string.  These values are thrown away after the run.
+          echo "SECRET_KEY=$(python3 -c 'import secrets; print(secrets.token_urlsafe(50))')" >> $GITHUB_ENV
+          echo "GOOGLE_RECAPTCHA_SECRET_KEY=ci-ephemeral-recaptcha-key" >> $GITHUB_ENV
 
       - name: Set up Python
         uses: actions/setup-python@v5
