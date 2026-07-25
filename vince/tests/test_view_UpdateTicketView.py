@@ -6,6 +6,7 @@ from django.contrib.auth.models import User
 from django.test import TestCase
 from django.test.client import RequestFactory
 from django.contrib.sessions.middleware import SessionMiddleware
+from django.test import override_settings
 
 from vince.tests.helpers import *
 from vince.views import UpdateTicketView, TicketView
@@ -13,7 +14,7 @@ from vince.views import UpdateTicketView, TicketView
 
 logger = logging.getLogger(__name__)
 
-# @override_settings(EMAIL_BACKEND='django.core.mail.backends.smtp.EmailBackend')
+@override_settings(ALT_VERIFY_TOKEN=lambda user, session: True)
 class TestUpdateTicketView(TestCase):
     fixtures = FIXTURES
 
