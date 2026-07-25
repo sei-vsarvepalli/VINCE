@@ -26,6 +26,361 @@
 #
 # DM21-1126
 ########################################################################
-from django.test import TestCase
+import json
+from types import SimpleNamespace
+from unittest.mock import patch
 
-# Create your tests here.
+from django.contrib.auth.models import User
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import SimpleTestCase
+from rest_framework.test import APIRequestFactory, force_authenticate
+
+from vinny.views import CommVulReportAPIView
+
+
+class _MockTemplate:
+    def render(self, context=None):
+        return "rendered"
+
+
+class _MockS3Client:
+    def copy_object(self, **kwargs):
+        return {"ok": True}
+
+    def put_object(self, **kwargs):
+        return {"ok": True}
+
+
+class _MockSESClient:
+    def send_email(self, **kwargs):
+        return {"MessageId": "test-message-id"}
+
+
+class _MockCaseRequest:
+    def __init__(self, user_file=None):
+        self.user = None
+        self.user_file = user_file
+
+    def save(self):
+        return None
+
+
+class CommVulReportAPIViewTests(SimpleTestCase):
+    def setUp(self):
+        self.factory = APIRequestFactory()
+        self.view = CommVulReportAPIView.as_view()
+        self.user = User(username="tester@example.com")
+        self.url = "/vince/comm/api/vulreport/"
+        self.csaf_payload = {
+            "document": {
+                "publisher": {
+                    "name": "Alice",
+                    "issuing_authority": "Org",
+                    "namespace": "mailto:alice@example.com",
+                },
+                "acknowledgments": [{"name": "Alice"}],
+            },
+            "product_tree": {
+                "branches": [
+                    {
+                        "category": "vendor",
+                        "name": "Vendor A",
+                        "branches": [
+                            {
+                                "category": "product_name",
+                                "name": "Product A",
+                                "branches": [{"category": "product_version", "name": "1.2.3"}],
+                            }
+                        ],
+                    },
+                    {
+                        "category": "vendor",
+                        "name": "Vendor B",
+                        "branches": [
+                            {
+                                "category": "product_name",
+                                "name": "Product B",
+                                "branches": [{"category": "product_version", "name": "2.0.0"}],
+                            }
+                        ],
+                    }
+                ]
+            },
+            "vulnerabilities": [
+                {
+                    "title": "Fallback title",
+                    "notes": [
+                        {"category": "description", "text": "Description from note"},
+                        {"title": "Vulnerability Discovery Method", "text": "Discovery text"},
+                    ],
+                    "threats": [
+                        {"category": "impact", "details": "Impact details"},
+                        {"category": "exploit_status", "details": "Exploit details"},
+                    ],
+                    "involvements": [
+                        {
+                            "status": "contact_attempted",
+                            "summary": "Reached out to vendor",
+                            "date": "2026-01-01T00:00:00Z",
+                        },
+                        {"status": "open", "party": "discoverer", "summary": "Public disclosure timeline"},
+                    ],
+                    "references": [
+                        {"summary": "Publicly known reference", "url": "https://example.com/public"},
+                        {"summary": "Actively exploited in the wild", "url": "https://example.com/exploit"},
+                    ],
+                    "metrics": [{"content": {"ssvc_v2": {"timestamp": "2026-01-01T00:00:00Z"}}}],
+                }
+            ],
+            "x_extensions": [
+                {
+                    "content": {
+                        "ics_impact": True,
+                        "ai_ml_system": True,
+                        "share_contact_with_vendor": True,
+                        "multiple_vendors_impacted": False,
+                        "multiple_vendors": ["Vendor C"],
+                        "Tracking_IDs": "VU#123456",
+                        "private_comments": "Private note",
+                    }
+                }
+            ],
+        }
+
+    def _mock_boto_client(self, name, *args, **kwargs):
+        if name == "s3":
+            return _MockS3Client()
+        if name == "ses":
+            return _MockSESClient()
+        return SimpleNamespace()
+
+    @patch("vinny.views.get_template", return_value=_MockTemplate())
+    @patch("vinny.views.send_sns_json")
+    @patch("vinny.views.send_sns")
+    @patch("vinny.views.create_record_of_API_access")
+    @patch("vinny.views.get_vrf_id", return_value="12345")
+    @patch("vinny.views.boto3.client")
+    @patch("vinny.views.CaseRequestForm.save")
+    def test_application_json_csaf_success(
+        self,
+        mock_form_save,
+        mock_boto_client,
+        mock_get_vrf_id,
+        mock_record_access,
+        mock_send_sns,
+        mock_send_sns_json,
+        mock_get_template,
+    ):
+        mock_boto_client.side_effect = self._mock_boto_client
+        mock_form_save.side_effect = lambda *args, **kwargs: _MockCaseRequest()
+
+        request = self.factory.post(self.url, data=self.csaf_payload, format="json")
+        force_authenticate(request, user=self.user)
+
+        response = self.view(request)
+        payload = json.loads(response.content)
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(payload["status"], "success")
+        self.assertTrue(payload["vrf_id"].endswith("12345"))
+        mapped_data = mock_form_save.call_args[0][0].cleaned_data
+        self.assertEqual(mapped_data["vendor_name"], "Vendor A")
+        self.assertEqual(mapped_data["other_vendors"], "Vendor B")
+        self.assertEqual(mapped_data["product_name"], "Product A")
+        self.assertEqual(mapped_data["product_version"], "1.2.3,2.0.0")
+        self.assertEqual(mapped_data["multiplevendors"], "True")
+        self.assertEqual(mapped_data["comm_attempt"], "True")
+        self.assertEqual(mapped_data["vendor_communication"], "Reached out to vendor")
+        self.assertEqual(mapped_data["disclosure_plans"], "Public disclosure timeline")
+        self.assertEqual(mapped_data["vul_exploit"], "Exploit details")
+        self.assertEqual(mapped_data["vul_impact"], "Impact details")
+        submitted_payload = json.loads(mock_send_sns_json.call_args[0][2])
+        self.assertEqual(submitted_payload["metadata"]["csaf"], self.csaf_payload)
+        self.assertTrue(submitted_payload["metadata"]["ai_ml_system"])
+
+    @patch("vinny.views.get_template", return_value=_MockTemplate())
+    @patch("vinny.views.send_sns_json")
+    @patch("vinny.views.send_sns")
+    @patch("vinny.views.create_record_of_API_access")
+    @patch("vinny.views.get_vrf_id", return_value="12345")
+    @patch("vinny.views.boto3.client")
+    @patch("vinny.views.CaseRequestForm.save")
+    def test_application_json_csaf_involvements_order_independent(
+        self,
+        mock_form_save,
+        mock_boto_client,
+        mock_get_vrf_id,
+        mock_record_access,
+        mock_send_sns,
+        mock_send_sns_json,
+        mock_get_template,
+    ):
+        mock_boto_client.side_effect = self._mock_boto_client
+        mock_form_save.side_effect = lambda *args, **kwargs: _MockCaseRequest()
+
+        payload = json.loads(json.dumps(self.csaf_payload))
+        payload["vulnerabilities"][0]["involvements"] = [
+            {
+                "status": "not_contacted",
+                "summary": "I have not attempted to contact any vendors",
+            },
+            {
+                "status": "open",
+                "party": "vendor",
+                "summary": "Vendor internal review",
+            },
+            {
+                "status": "contact_attempted",
+                "summary": "Reached out later",
+                "date": "2026-02-01T00:00:00Z",
+            },
+            {
+                "status": "open",
+                "party": "discoverer",
+                "summary": "Discoverer disclosure plan",
+            },
+        ]
+        request = self.factory.post(self.url, data=payload, format="json")
+        force_authenticate(request, user=self.user)
+
+        response = self.view(request)
+        payload = json.loads(response.content)
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(payload["status"], "success")
+        mapped_data = mock_form_save.call_args[0][0].cleaned_data
+        self.assertEqual(mapped_data["comm_attempt"], "True")
+        self.assertEqual(mapped_data["vendor_communication"], "Reached out later")
+        self.assertEqual(mapped_data["first_contact"], "2026-02-01")
+        self.assertEqual(mapped_data["disclosure_plans"], "Discoverer disclosure plan")
+
+    def test_contact_attempted_without_date_returns_400(self):
+        payload = json.loads(json.dumps(self.csaf_payload))
+        payload["vulnerabilities"][0]["involvements"] = [
+            {"status": "contact_attempted", "summary": "Reached out to vendor"},
+        ]
+        request = self.factory.post(self.url, data=payload, format="json")
+        force_authenticate(request, user=self.user)
+
+        response = self.view(request)
+        body = json.loads(response.content)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            body["errors"]["csaf"][0],
+            "first_contact date is required when involvement status is contact_attempted.",
+        )
+
+    @patch("vinny.views.get_template", return_value=_MockTemplate())
+    @patch("vinny.views.send_sns_json")
+    @patch("vinny.views.send_sns")
+    @patch("vinny.views.create_record_of_API_access")
+    @patch("vinny.views.get_vrf_id", return_value="12345")
+    @patch("vinny.views.boto3.client")
+    @patch("vinny.views.CaseRequestForm.save")
+    def test_multipart_csaf_with_file_success(
+        self,
+        mock_form_save,
+        mock_boto_client,
+        mock_get_vrf_id,
+        mock_record_access,
+        mock_send_sns,
+        mock_send_sns_json,
+        mock_get_template,
+    ):
+        mock_boto_client.side_effect = self._mock_boto_client
+
+        def _save_form(form, commit=False):
+            return _MockCaseRequest(user_file=form.cleaned_data.get("user_file"))
+
+        mock_form_save.side_effect = _save_form
+        upload = SimpleUploadedFile("sample.txt", b"sample data", content_type="text/plain")
+        request = self.factory.post(
+            self.url,
+            data={"csaf": json.dumps(self.csaf_payload), "user_file": upload},
+            format="multipart",
+        )
+        force_authenticate(request, user=self.user)
+
+        response = self.view(request)
+        payload = json.loads(response.content)
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(payload["status"], "success")
+        submitted_payload = json.loads(mock_send_sns_json.call_args[0][2])
+        self.assertEqual(submitted_payload["metadata"]["csaf"], self.csaf_payload)
+        self.assertTrue(submitted_payload["metadata"]["ai_ml_system"])
+
+    def test_malformed_csaf_json_returns_400(self):
+        request = self.factory.post(self.url, data={"csaf": '{"document":'}, format="multipart")
+        force_authenticate(request, user=self.user)
+
+        response = self.view(request)
+        payload = json.loads(response.content)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("csaf", payload["errors"])
+
+    def test_csaf_missing_product_tree_categories_returns_400(self):
+        invalid_payload = {
+            **self.csaf_payload,
+            "product_tree": {"branches": [{"category": "vendor", "name": "Vendor A"}]},
+        }
+        request = self.factory.post(self.url, data=invalid_payload, format="json")
+        force_authenticate(request, user=self.user)
+
+        response = self.view(request)
+        payload = json.loads(response.content)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            payload["errors"]["csaf"][0],
+            "At least one value for vendor, product_name, and product_version is required.",
+        )
+
+    @patch("vinny.views.get_template", return_value=_MockTemplate())
+    @patch("vinny.views.send_sns_json")
+    @patch("vinny.views.send_sns")
+    @patch("vinny.views.create_record_of_API_access")
+    @patch("vinny.views.get_vrf_id", return_value="12345")
+    @patch("vinny.views.boto3.client")
+    @patch("vinny.views.CaseRequestForm.save")
+    def test_legacy_form_submission_still_works(
+        self,
+        mock_form_save,
+        mock_boto_client,
+        mock_get_vrf_id,
+        mock_record_access,
+        mock_send_sns,
+        mock_send_sns_json,
+        mock_get_template,
+    ):
+        mock_boto_client.side_effect = self._mock_boto_client
+        mock_form_save.side_effect = lambda *args, **kwargs: _MockCaseRequest()
+
+        legacy_data = {
+            "contact_name": "Legacy User",
+            "contact_email": "legacy@example.com",
+            "product_name": "Legacy Product",
+            "product_version": "1.0",
+            "vul_description": "Description",
+            "vul_exploit": "Exploit",
+            "vul_impact": "Impact",
+            "vul_discovery": "Discovery",
+            "vul_public": "False",
+            "vul_exploited": "False",
+            "vul_disclose": "False",
+            "share_release": "True",
+            "credit_release": "True",
+            "comm_attempt": "False",
+            "multiplevendors": "False",
+        }
+
+        request = self.factory.post(self.url, data=legacy_data, format="multipart")
+        force_authenticate(request, user=self.user)
+
+        response = self.view(request)
+        payload = json.loads(response.content)
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(payload["status"], "success")
