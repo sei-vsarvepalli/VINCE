@@ -117,3 +117,6 @@ jobs:
 
       - name: Run VINCE test suite
         run: python manage.py test vince --verbosity=2
+
+      - name: Run VINCEComm test suite
+        run: python manage.py test vinny --verbosity=2

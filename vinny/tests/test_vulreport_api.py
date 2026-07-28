@@ -27,12 +27,13 @@
 # DM21-1126
 ########################################################################
 import json
+from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import SimpleTestCase
+from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from vinny.views import CommVulReportAPIView
@@ -65,11 +66,15 @@ class _MockCaseRequest:
         return None
 
 
-class CommVulReportAPIViewTests(SimpleTestCase):
+class CommVulReportAPIViewTests(TestCase):
     def setUp(self):
         self.factory = APIRequestFactory()
         self.view = CommVulReportAPIView.as_view()
-        self.user = User(username="tester@example.com")
+        self.user = User.objects.create_user(
+            username="tester@example.com",
+            email="tester@example.com",
+            password="password123",
+        )
         self.url = "/vince/comm/api/vulreport/"
         self.csaf_payload = {
             "document": {
@@ -103,7 +108,7 @@ class CommVulReportAPIViewTests(SimpleTestCase):
                                 "branches": [{"category": "product_version", "name": "2.0.0"}],
                             }
                         ],
-                    }
+                    },
                 ]
             },
             "vulnerabilities": [
@@ -154,25 +159,33 @@ class CommVulReportAPIViewTests(SimpleTestCase):
             return _MockSESClient()
         return SimpleNamespace()
 
-    @patch("vinny.views.get_template", return_value=_MockTemplate())
-    @patch("vinny.views.send_sns_json")
-    @patch("vinny.views.send_sns")
-    @patch("vinny.views.create_record_of_API_access")
-    @patch("vinny.views.get_vrf_id", return_value="12345")
-    @patch("vinny.views.boto3.client")
-    @patch("vinny.views.CaseRequestForm.save")
-    def test_application_json_csaf_success(
-        self,
-        mock_form_save,
-        mock_boto_client,
-        mock_get_vrf_id,
-        mock_record_access,
-        mock_send_sns,
-        mock_send_sns_json,
-        mock_get_template,
-    ):
-        mock_boto_client.side_effect = self._mock_boto_client
-        mock_form_save.side_effect = lambda *args, **kwargs: _MockCaseRequest()
+    def _patched_success_dependencies(self, form_save_side_effect=None):
+        stack = ExitStack()
+        self.addCleanup(stack.close)
+
+        mocks = {
+            "get_template": stack.enter_context(
+                patch("vinny.views.get_template", return_value=_MockTemplate())
+            ),
+            "send_sns_json": stack.enter_context(patch("vinny.views.send_sns_json")),
+            "send_sns": stack.enter_context(patch("vinny.views.send_sns")),
+            "record_access": stack.enter_context(patch("vinny.views.create_record_of_API_access")),
+            "get_vrf_id": stack.enter_context(patch("vinny.views.get_vrf_id", return_value="12345")),
+            "boto_client": stack.enter_context(patch("vinny.views.boto3.client")),
+            # autospec=True ensures first arg is the bound form instance (self)
+            "form_save": stack.enter_context(patch("vinny.views.CaseRequestForm.save", autospec=True)),
+        }
+
+        mocks["boto_client"].side_effect = self._mock_boto_client
+        if form_save_side_effect is None:
+            mocks["form_save"].side_effect = lambda form, *args, **kwargs: _MockCaseRequest()
+        else:
+            mocks["form_save"].side_effect = form_save_side_effect
+
+        return mocks
+
+    def test_application_json_csaf_success(self):
+        mocks = self._patched_success_dependencies()
 
         request = self.factory.post(self.url, data=self.csaf_payload, format="json")
         force_authenticate(request, user=self.user)
@@ -183,7 +196,11 @@ class CommVulReportAPIViewTests(SimpleTestCase):
         self.assertEqual(response.status_code, 201)
         self.assertEqual(payload["status"], "success")
         self.assertTrue(payload["vrf_id"].endswith("12345"))
-        mapped_data = mock_form_save.call_args[0][0].cleaned_data
+
+        self.assertIsNotNone(mocks["form_save"].call_args)
+        form_instance = mocks["form_save"].call_args.args[0]
+        mapped_data = form_instance.cleaned_data
+
         self.assertEqual(mapped_data["vendor_name"], "Vendor A")
         self.assertEqual(mapped_data["other_vendors"], "Vendor B")
         self.assertEqual(mapped_data["product_name"], "Product A")
@@ -194,61 +211,35 @@ class CommVulReportAPIViewTests(SimpleTestCase):
         self.assertEqual(mapped_data["disclosure_plans"], "Public disclosure timeline")
         self.assertEqual(mapped_data["vul_exploit"], "Exploit details")
         self.assertEqual(mapped_data["vul_impact"], "Impact details")
-        submitted_payload = json.loads(mock_send_sns_json.call_args[0][2])
+
+        submitted_payload = json.loads(mocks["send_sns_json"].call_args[0][2])
         self.assertEqual(submitted_payload["metadata"]["csaf"], self.csaf_payload)
         self.assertTrue(submitted_payload["metadata"]["ai_ml_system"])
 
-    @patch("vinny.views.get_template", return_value=_MockTemplate())
-    @patch("vinny.views.send_sns_json")
-    @patch("vinny.views.send_sns")
-    @patch("vinny.views.create_record_of_API_access")
-    @patch("vinny.views.get_vrf_id", return_value="12345")
-    @patch("vinny.views.boto3.client")
-    @patch("vinny.views.CaseRequestForm.save")
-    def test_application_json_csaf_involvements_order_independent(
-        self,
-        mock_form_save,
-        mock_boto_client,
-        mock_get_vrf_id,
-        mock_record_access,
-        mock_send_sns,
-        mock_send_sns_json,
-        mock_get_template,
-    ):
-        mock_boto_client.side_effect = self._mock_boto_client
-        mock_form_save.side_effect = lambda *args, **kwargs: _MockCaseRequest()
+    def test_application_json_csaf_involvements_order_independent(self):
+        mocks = self._patched_success_dependencies()
 
         payload = json.loads(json.dumps(self.csaf_payload))
         payload["vulnerabilities"][0]["involvements"] = [
-            {
-                "status": "not_contacted",
-                "summary": "I have not attempted to contact any vendors",
-            },
-            {
-                "status": "open",
-                "party": "vendor",
-                "summary": "Vendor internal review",
-            },
-            {
-                "status": "contact_attempted",
-                "summary": "Reached out later",
-                "date": "2026-02-01T00:00:00Z",
-            },
-            {
-                "status": "open",
-                "party": "discoverer",
-                "summary": "Discoverer disclosure plan",
-            },
+            {"status": "not_contacted", "summary": "I have not attempted to contact any vendors"},
+            {"status": "open", "party": "vendor", "summary": "Vendor internal review"},
+            {"status": "contact_attempted", "summary": "Reached out later", "date": "2026-02-01T00:00:00Z"},
+            {"status": "open", "party": "discoverer", "summary": "Discoverer disclosure plan"},
         ]
+
         request = self.factory.post(self.url, data=payload, format="json")
         force_authenticate(request, user=self.user)
 
         response = self.view(request)
-        payload = json.loads(response.content)
+        body = json.loads(response.content)
 
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(payload["status"], "success")
-        mapped_data = mock_form_save.call_args[0][0].cleaned_data
+        self.assertEqual(body["status"], "success")
+
+        self.assertIsNotNone(mocks["form_save"].call_args)
+        form_instance = mocks["form_save"].call_args.args[0]
+        mapped_data = form_instance.cleaned_data
+
         self.assertEqual(mapped_data["comm_attempt"], "True")
         self.assertEqual(mapped_data["vendor_communication"], "Reached out later")
         self.assertEqual(mapped_data["first_contact"], "2026-02-01")
@@ -271,30 +262,12 @@ class CommVulReportAPIViewTests(SimpleTestCase):
             "first_contact date is required when involvement status is contact_attempted.",
         )
 
-    @patch("vinny.views.get_template", return_value=_MockTemplate())
-    @patch("vinny.views.send_sns_json")
-    @patch("vinny.views.send_sns")
-    @patch("vinny.views.create_record_of_API_access")
-    @patch("vinny.views.get_vrf_id", return_value="12345")
-    @patch("vinny.views.boto3.client")
-    @patch("vinny.views.CaseRequestForm.save")
-    def test_multipart_csaf_with_file_success(
-        self,
-        mock_form_save,
-        mock_boto_client,
-        mock_get_vrf_id,
-        mock_record_access,
-        mock_send_sns,
-        mock_send_sns_json,
-        mock_get_template,
-    ):
-        mock_boto_client.side_effect = self._mock_boto_client
-
-        def _save_form(form, commit=False):
-            return _MockCaseRequest(user_file=form.cleaned_data.get("user_file"))
-
-        mock_form_save.side_effect = _save_form
+    def test_multipart_csaf_with_file_success(self):
         upload = SimpleUploadedFile("sample.txt", b"sample data", content_type="text/plain")
+        mocks = self._patched_success_dependencies(
+            form_save_side_effect=lambda form, *args, **kwargs: _MockCaseRequest(user_file=upload)
+        )
+
         request = self.factory.post(
             self.url,
             data={"csaf": json.dumps(self.csaf_payload), "user_file": upload},
@@ -303,11 +276,12 @@ class CommVulReportAPIViewTests(SimpleTestCase):
         force_authenticate(request, user=self.user)
 
         response = self.view(request)
-        payload = json.loads(response.content)
+        body = json.loads(response.content)
 
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(payload["status"], "success")
-        submitted_payload = json.loads(mock_send_sns_json.call_args[0][2])
+        self.assertEqual(body["status"], "success")
+
+        submitted_payload = json.loads(mocks["send_sns_json"].call_args[0][2])
         self.assertEqual(submitted_payload["metadata"]["csaf"], self.csaf_payload)
         self.assertTrue(submitted_payload["metadata"]["ai_ml_system"])
 
@@ -338,25 +312,8 @@ class CommVulReportAPIViewTests(SimpleTestCase):
             "At least one value for vendor, product_name, and product_version is required.",
         )
 
-    @patch("vinny.views.get_template", return_value=_MockTemplate())
-    @patch("vinny.views.send_sns_json")
-    @patch("vinny.views.send_sns")
-    @patch("vinny.views.create_record_of_API_access")
-    @patch("vinny.views.get_vrf_id", return_value="12345")
-    @patch("vinny.views.boto3.client")
-    @patch("vinny.views.CaseRequestForm.save")
-    def test_legacy_form_submission_still_works(
-        self,
-        mock_form_save,
-        mock_boto_client,
-        mock_get_vrf_id,
-        mock_record_access,
-        mock_send_sns,
-        mock_send_sns_json,
-        mock_get_template,
-    ):
-        mock_boto_client.side_effect = self._mock_boto_client
-        mock_form_save.side_effect = lambda *args, **kwargs: _MockCaseRequest()
+    def test_legacy_form_submission_still_works(self):
+        self._patched_success_dependencies()
 
         legacy_data = {
             "contact_name": "Legacy User",
