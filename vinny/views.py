@@ -5471,8 +5471,8 @@ class CVEVulAPIView(generics.GenericAPIView):
         return f"CVE Lookup View"
 
     def get(self, request, *args, **kwargs):
-        year = re.sub("[^\d]", "", self.kwargs["year"])
-        pk = re.sub("[^\d]", "", self.kwargs["pk"])
+        year = re.sub(r"[^\d]", "", self.kwargs["year"])
+        pk = re.sub(r"[^\d]", "", self.kwargs["pk"])
         cve = f"CVE-{year}-{pk}"
         cvewo = f"{year}-{pk}"
         report = None
