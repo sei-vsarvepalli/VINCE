@@ -429,8 +429,9 @@ class GenerateTokenView(LoginRequiredMixin, TokenMixin, GetUserMixin, TemplateVi
         # identified by var vinny:deltoken
         token = VinceAPIToken(user=self.request.user)
         token.save(context["token"])
-        c = get_cognito(self.request)
-        c.update_profile({"custom:api_key": str(token)})
+        if getattr(settings, "AUTH_BACKEND_MODE", None) != "local":
+            c = get_cognito(self.request)
+            c.update_profile({"custom:api_key": str(token)})
         ip = vinceutils.get_ip(self.request)
         logger.debug(f"New API key generated for { self.request.user.username } from ip {ip}")
         return context
