@@ -54,7 +54,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ROOT_DIR = environ.Path(__file__) - 3
 
 # any change that requires database migrations is a minor release
-VERSION = "3.0.43"
+VERSION = "3.0.44"
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/2.1/howto/deployment/checklist/
@@ -407,6 +407,7 @@ if os.environ.get("AWS_SECRET_MANAGER", None):
 # Check environment variables for database credentials
 else:
     VINCE_NAMESPACE = "vince"
+    MFA_REDIRECT_URL = "vince:mfaauth"
     SUPERUSER = {"username": "superuser@example.com", "password": "SavingTheWorldWithPerl"}
     vincetrack_user = os.environ.get("VINCE_TRACK_DB_USER", "vincetrack")
     vincetrack_password = os.environ.get("VINCE_TRACK_DB_PASS", "vincetrack")
