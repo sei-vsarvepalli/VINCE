@@ -739,8 +739,12 @@ vince.yourdomain.com\r\n\
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "cogauth.backend.HashedTokenAuthentication",
-        #'rest_framework.authentication.TokenAuthentication',
-        #        'cogauth.backend.JSONWebTokenAuthentication',
+#If you want to support fallback in REST request from a browser
+#using a local authenticated session
+#with Local Auth uncomment the first and with Cognito uncomment
+#the second line
+        #"rest_framework.authentication.SessionAuthentication",
+        #"cogauth.backend.CognitoAuthenticateAPI",
     ],
     "DEFAULT_THROTTLE_RATES": {
         "user": "100/hour",  # Authenticated users can make 100 requests per hour

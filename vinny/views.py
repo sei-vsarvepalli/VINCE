@@ -803,6 +803,7 @@ class TokenLogin(GetUserMixin, generic.TemplateView):
     template_name = "vinny/index.html"
 
     def post(self, request, *args, **kwargs):
+        ip = vinceutils.get_ip(self.request)
         if (
             self.request.POST.get("access_token", None)
             and self.request.POST.get("refresh_token", None)
@@ -815,13 +816,13 @@ class TokenLogin(GetUserMixin, generic.TemplateView):
             if user:
                 auth_login(request, user)
                 request.session["timezone"] = user.vinceprofile.timezone
-                logger.debug(f"Token Login attempt for {user}")
+                logger.debug(f"Token Login attempt for {user} from {ip} success")
                 return JsonResponse({"response": "success"}, status=200)
         try:
             url = request.build_absolute_uri()
-            logger.debug(f"unauthorized access for User {user} to {url}")
+            logger.debug(f"unauthorized access from IP {ip} to {url}")
         except Exception as e:
-            logger.debug(f"unauthorized access for User {user} to resources. Error when building URI {e}")
+            logger.debug(f"unauthorized access from IP {ip} to resources. Error when building URI {e}")
 
         return JsonResponse({"response": "Unauthorized", "error": "Unauthorized access"}, status=401)
 
@@ -4769,7 +4770,7 @@ class CommVulReportAPIView(generics.GenericAPIView):
         exploit_references = [
             ref.get("url")
             for ref in references
-            if isinstance(ref, dict) and ref.get("url") and "publicy exploited references" in (ref.get("summary", "").lower())
+            if isinstance(ref, dict) and ref.get("url") and "publicly exploited references" in (ref.get("summary", "").lower())
         ]
 
         namespace = cls._get_nested_value(csaf, ["document", "publisher", "namespace"], "")
