@@ -103,10 +103,10 @@ jobs:
 
       - name: Run migrations
         run: |
-	  for d in */migrations/*.py; do
-	      if [ "$(basename "$d")" != "__init__.py" ]; then
+          for d in */migrations/*.py; do
+             if [ "$(basename "$d")" != "__init__.py" ]; then
                   rm -f "$d"
-	      fi
+             fi
           done
 	  python -W ignore manage.py makemigrations
 
