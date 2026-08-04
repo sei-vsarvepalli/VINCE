@@ -108,7 +108,7 @@ jobs:
                   rm -f "$d"
              fi
           done
-	  python -W ignore manage.py makemigrations
+          python -W ignore manage.py makemigrations
 
 
       - name: Run VINCE test suite
