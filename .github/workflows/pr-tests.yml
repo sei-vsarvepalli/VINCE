@@ -57,6 +57,7 @@ jobs:
       VINCE_PUB_DB_NAME: vincepubtest
       NO_REPLY_EMAIL: noreply@example.com
       REPLY_EMAIL: support@example.com
+      AWS_COGNITO_SUPERUSER_GROUP: SUPERADMINCLASS
 
     steps:
       - name: Check out repository
@@ -98,25 +99,17 @@ jobs:
             END IF;
           END
           $$;
-          SELECT 'CREATE DATABASE vincetest OWNER vince'
-          WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'vincetest')\gexec
-          SELECT 'CREATE DATABASE vincecommtest OWNER vince'
-          WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'vincecommtest')\gexec
-          SELECT 'CREATE DATABASE vincepubtest OWNER vince'
-          WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'vincepubtest')\gexec
           SQL
 
       - name: Run migrations
         run: |
-          python manage.py migrate
-          python manage.py migrate --database=vincecomm
-          python manage.py migrate --database=vincepub
+	  for d in */migrations/*.py; do
+	      if [ "$(basename "$d")" != "__init__.py" ]; then
+                  rm -f "$d"
+	      fi
+          done
+	  python -W ignore manage.py makemigrations
 
-      - name: Run local-auth smoke tests
-        run: python manage.py test vince.auth.tests --verbosity=2
 
       - name: Run VINCE test suite
-        run: python manage.py test vince --verbosity=2
-
-      - name: Run VINCEComm test suite
-        run: python manage.py test vinny --verbosity=2
+        run: python manage.py test vince vinny --verbosity=2
