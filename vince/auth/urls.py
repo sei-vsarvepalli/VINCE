@@ -18,7 +18,7 @@
 ########################################################################
 from django.urls import path
 
-# from .views import whoami  # uncomment to enable the whoami debug endpoint
+from .views import whoami  # uncomment to enable the whoami debug endpoint
 
 urlpatterns = [
     # The whoami endpoint is disabled by default.  It is a development/testing
@@ -31,5 +31,5 @@ urlpatterns = [
     #      The view enforces DEBUG=True itself (returns HTTP 403 otherwise), but
     #      keeping it wired up in production is an unnecessary attack surface.
     #
-    # path("whoami/", whoami, name="whoami"),
+    path("whoami/", whoami, name="whoami"),
 ]
