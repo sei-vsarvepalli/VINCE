@@ -18,10 +18,18 @@
 ########################################################################
 from django.urls import path
 
-from .views import whoami
+# from .views import whoami  # uncomment to enable the whoami debug endpoint
 
 urlpatterns = [
-    # Debug-only endpoint: returns JSON describing the authenticated user.
-    # Active only when settings.DEBUG is True; see vince.auth.views.whoami.
-    path("whoami/", whoami, name="whoami"),
+    # The whoami endpoint is disabled by default.  It is a development/testing
+    # helper that returns JSON describing the authenticated user.
+    #
+    # To enable it locally:
+    #   1. Uncomment the import above.
+    #   2. Uncomment the path() entry below.
+    #   3. Ensure DEBUG=True and AUTH_BACKEND_MODE=local in your environment.
+    #      The view enforces DEBUG=True itself (returns HTTP 403 otherwise), but
+    #      keeping it wired up in production is an unnecessary attack surface.
+    #
+    # path("whoami/", whoami, name="whoami"),
 ]
