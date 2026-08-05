@@ -207,20 +207,21 @@ class WhoamiViewTest(TestCase):
         self.assertEqual(response.status_code, 200)
 
     # ------------------------------------------------------------------
-    # Returns 403 when REMOTE_ADDR is a non-loopback address.
+    # Returns 200 when the user is already authenticated, even from a
+    # non-loopback address.
     # ------------------------------------------------------------------
-    def test_whoami_blocked_for_non_localhost(self):
+    def test_whoami_allows_authenticated_non_localhost(self):
         user = User.objects.create_user(username="remoteuser")
         request = self.factory.get("/vince/auth/whoami/", REMOTE_ADDR="10.0.0.1")
         request.user = user
         response = whoami(request)
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 200)
 
     # ------------------------------------------------------------------
-    # Returns 403 when X-Forwarded-For is a non-loopback address
-    # (proxy header takes precedence over REMOTE_ADDR in get_ip).
+    # Returns 200 when the user is already authenticated, even if
+    # X-Forwarded-For is non-loopback.
     # ------------------------------------------------------------------
-    def test_whoami_blocked_when_forwarded_for_is_remote(self):
+    def test_whoami_allows_authenticated_forwarded_for_remote(self):
         user = User.objects.create_user(username="proxieduser")
         request = self.factory.get(
             "/vince/auth/whoami/",
@@ -229,7 +230,7 @@ class WhoamiViewTest(TestCase):
         )
         request.user = user
         response = whoami(request)
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 200)
 
     # ------------------------------------------------------------------
     # Returns 401 when no auth is present in local+DEBUG mode.
@@ -241,7 +242,8 @@ class WhoamiViewTest(TestCase):
         self.assertEqual(response.status_code, 401)
 
     # ------------------------------------------------------------------
-    # Returns 403 when DEBUG=False (endpoint must be unavailable in prod).
+    # Returns 403 when DEBUG=False for unauthenticated requests because the
+    # dev bootstrap path must be unavailable in prod.
     # ------------------------------------------------------------------
     @override_settings(DEBUG=False)
     def test_whoami_blocked_outside_debug(self):
@@ -249,3 +251,14 @@ class WhoamiViewTest(TestCase):
         request.user = AnonymousUser()
         response = whoami(request)
         self.assertEqual(response.status_code, 403)
+
+    # ------------------------------------------------------------------
+    # Returns 200 for an already-authenticated user even when DEBUG=False.
+    # ------------------------------------------------------------------
+    @override_settings(DEBUG=False)
+    def test_whoami_allows_authenticated_user_outside_debug(self):
+        user = User.objects.create_user(username="produser")
+        request = self.factory.get("/vince/auth/whoami/", REMOTE_ADDR="203.0.113.10")
+        request.user = user
+        response = whoami(request)
+        self.assertEqual(response.status_code, 200)

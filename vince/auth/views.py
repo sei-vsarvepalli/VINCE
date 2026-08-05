@@ -17,17 +17,16 @@
 # DM21-1126
 ########################################################################
 """
-Lightweight debug/development endpoint for local auth mode.
+Authenticated-user introspection endpoint.
 
-The ``whoami`` view is only active when ``settings.DEBUG`` is ``True``
-**and** the request originates from localhost (127.0.0.1 or ::1).
-It is intended **solely** for local development and automated testing and
-must never be relied upon in production.
+If the request already has an authenticated user from the configured auth
+backend, the view returns user details without applying the local dev-only
+bootstrap restrictions.
 
-In ``AUTH_BACKEND_MODE=local`` the view also accepts the optional dev
-bootstrap headers ``X-Dev-User``, ``X-Dev-Email``, and ``X-Dev-Groups``
-to create/sync a local user on-the-fly (``DEBUG=True`` guard is enforced
-inside the adapter).
+In ``AUTH_BACKEND_MODE=local``, unauthenticated requests may still use the
+optional dev bootstrap headers ``X-Dev-User``, ``X-Dev-Email``, and
+``X-Dev-Groups`` to create/sync a local user on-the-fly. That fallback path
+remains restricted to ``DEBUG=True`` and localhost/test-runner requests.
 """
 
 from django.conf import settings
@@ -58,23 +57,25 @@ def whoami(request):
     """
     Return JSON describing the currently authenticated user.
 
-    Access is restricted to:
-    * ``settings.DEBUG`` must be ``True``.
-    * The client IP (resolved via ``lib.vince.utils.get_ip``) must be a
-      loopback address (``127.0.0.1`` or ``::1``), or unresolvable
+    Already-authenticated users are allowed through regardless of DEBUG or
+    client IP so normal backend-based authentication continues to work.
+
+    Unauthenticated requests may fall back to local dev bootstrap, but only
+    when:
+    * ``settings.DEBUG`` is ``True``.
+    * The client IP (resolved via ``lib.vince.utils.get_ip``) is a loopback
+      address (``127.0.0.1`` or ``::1``), or unresolvable
       (``"Unknown"`` — test-runner / RequestFactory context).
-
-    Any other combination returns HTTP 403.
     """
-    if not getattr(settings, "DEBUG", False):
-        return JsonResponse({"error": "Not available outside DEBUG mode."}, status=403)
-
-    if not _is_localhost(request):
-        return JsonResponse({"error": "Only accessible from localhost."}, status=403)
-
-    # In local mode, attempt header-based dev bootstrap if not already authed.
     user = request.user
     if not getattr(user, "is_authenticated", False):
+        if not getattr(settings, "DEBUG", False):
+            return JsonResponse({"error": "Not available outside DEBUG mode."}, status=403)
+
+        if not _is_localhost(request):
+            return JsonResponse({"error": "Only accessible from localhost."}, status=403)
+
+        # In local mode, attempt header-based dev bootstrap if not already authed.
         bootstrapped = authenticate_request(request)
         if bootstrapped is not None:
             user = bootstrapped
