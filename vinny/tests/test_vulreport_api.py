@@ -67,6 +67,7 @@ class _MockCaseRequest:
 
 
 class CommVulReportAPIViewTests(TestCase):
+    databases = {"default", "vincecomm"}
     def setUp(self):
         self.factory = APIRequestFactory()
         self.view = CommVulReportAPIView.as_view()
@@ -134,7 +135,7 @@ class CommVulReportAPIViewTests(TestCase):
                         {"summary": "Publicly known reference", "url": "https://example.com/public"},
                         {"summary": "Actively exploited in the wild", "url": "https://example.com/exploit"},
                     ],
-                    "metrics": [{"content": {"ssvc_v2": {"timestamp": "2026-01-01T00:00:00Z"}}}],
+                    "metrics":[{"content":{"ssvc_v2":{"schemaVersion":"2.0.0","selections":[{"key":"E","name":"Exploitation","namespace":"ssvc","values":[{"key":"A","name":"Active"}],"version":"1.1.0"}]}}}],
                 }
             ],
             "x_extensions": [

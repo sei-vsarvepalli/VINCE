@@ -4684,6 +4684,51 @@ class CommVulReportAPIView(generics.GenericAPIView):
             "multiplevendors": has_multiple_vendors,
             "other_vendors": "\n".join(vendors[1:]) if has_multiple_vendors else "",
         }
+    @staticmethod
+    def _has_exploitation_active_ssvc(metrics):
+        MIN_SCHEMA = Version("2.0.0")
+        MIN_EXPLOITATION = Version("1.1.0")
+        if not isinstance(metrics, list):
+            return False
+
+        for metric in metrics:
+            if not isinstance(metric, dict):
+                continue
+
+            content = metric.get("content")
+            if not isinstance(content, dict):
+                continue
+
+            ssvc = content.get("ssvc_v2")
+            if not isinstance(ssvc, dict):
+                continue
+
+            # Check schema version
+            try:
+                if Version(ssvc.get("schemaVersion", "0")) < MIN_SCHEMA:
+                    continue
+            except Exception:
+                continue
+
+            # Find Exploitation decision point
+            for selection in ssvc.get("selections", []):
+                if selection.get("key") != "E":
+                    continue
+
+                try:
+                    if Version(selection.get("version", "0")) < MIN_EXPLOITATION:
+                        continue
+                except Exception:
+                    continue
+
+                if any(
+                        value.get("key") == "A"
+                        for value in selection.get("values", [])
+                        if isinstance(value, dict)
+                ):
+                    return True
+
+        return False
 
     @classmethod
     def _map_csaf_to_form_data(cls, csaf):
@@ -4779,12 +4824,7 @@ class CommVulReportAPIView(generics.GenericAPIView):
         else:
             contact_email = namespace if isinstance(namespace, str) else ""
 
-        has_ssvc = bool(
-            metrics
-            and isinstance(metrics[0], dict)
-            and isinstance(metrics[0].get("content"), dict)
-            and metrics[0]["content"].get("ssvc_v2")
-        )
+        has_exploitation_active = cls._has_exploitation_active_ssvc(metrics)
         product_tree_fields = cls._extract_product_tree_fields(csaf)
         multiplevendors_from_extension = bool(x_extension_content.get("multiple_vendors_impacted", False))
         extension_other_vendors = "\n".join(x_extension_content.get("multiple_vendors") or [])
@@ -4810,7 +4850,7 @@ class CommVulReportAPIView(generics.GenericAPIView):
             "disclosure_plans": disclosure_plans if vul_disclose else "",
             "vul_public": cls._coerce_choice_bool(bool(public_references)),
             "public_references": "\n".join(public_references),
-            "vul_exploited": cls._coerce_choice_bool(has_ssvc),
+            "vul_exploited": cls._coerce_choice_bool(has_exploitation_active),
             "exploit_references": "\n".join(exploit_references),
             "ics_impact": bool(x_extension_content.get("ics_impact", False)),
             "ai_ml_system": bool(x_extension_content.get("ai_ml_system", False) or x_extension_content.get("ai/ml", False)),
