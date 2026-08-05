@@ -151,7 +151,9 @@ class WhoamiViewTest(TestCase):
         self.factory = RequestFactory()
 
     # ------------------------------------------------------------------
-    # Returns 200 with user info when dev headers are supplied
+    # Returns 200 with user info when dev headers are supplied.
+    # RequestFactory produces no REMOTE_ADDR → get_ip returns "Unknown"
+    # which the view treats as localhost (test-runner context).
     # ------------------------------------------------------------------
     def test_whoami_with_dev_headers(self):
         request = self.factory.get(
@@ -172,7 +174,8 @@ class WhoamiViewTest(TestCase):
         self.assertIn("analyst", data["groups"])
 
     # ------------------------------------------------------------------
-    # Returns 200 when user is already authenticated via session
+    # Returns 200 when user is already authenticated via session.
+    # No REMOTE_ADDR → "Unknown" → allowed.
     # ------------------------------------------------------------------
     def test_whoami_with_authenticated_user(self):
         user = User.objects.create_user(username="sessionuser")
@@ -184,7 +187,52 @@ class WhoamiViewTest(TestCase):
         self.assertEqual(data["username"], "sessionuser")
 
     # ------------------------------------------------------------------
-    # Returns 401 when no auth is present in local+DEBUG mode
+    # Returns 200 when REMOTE_ADDR is 127.0.0.1 explicitly.
+    # ------------------------------------------------------------------
+    def test_whoami_with_loopback_remote_addr(self):
+        user = User.objects.create_user(username="loopbackuser")
+        request = self.factory.get("/vince/auth/whoami/", REMOTE_ADDR="127.0.0.1")
+        request.user = user
+        response = whoami(request)
+        self.assertEqual(response.status_code, 200)
+
+    # ------------------------------------------------------------------
+    # Returns 200 when REMOTE_ADDR is IPv6 loopback ::1.
+    # ------------------------------------------------------------------
+    def test_whoami_with_ipv6_loopback_remote_addr(self):
+        user = User.objects.create_user(username="ipv6user")
+        request = self.factory.get("/vince/auth/whoami/", REMOTE_ADDR="::1")
+        request.user = user
+        response = whoami(request)
+        self.assertEqual(response.status_code, 200)
+
+    # ------------------------------------------------------------------
+    # Returns 403 when REMOTE_ADDR is a non-loopback address.
+    # ------------------------------------------------------------------
+    def test_whoami_blocked_for_non_localhost(self):
+        user = User.objects.create_user(username="remoteuser")
+        request = self.factory.get("/vince/auth/whoami/", REMOTE_ADDR="10.0.0.1")
+        request.user = user
+        response = whoami(request)
+        self.assertEqual(response.status_code, 403)
+
+    # ------------------------------------------------------------------
+    # Returns 403 when X-Forwarded-For is a non-loopback address
+    # (proxy header takes precedence over REMOTE_ADDR in get_ip).
+    # ------------------------------------------------------------------
+    def test_whoami_blocked_when_forwarded_for_is_remote(self):
+        user = User.objects.create_user(username="proxieduser")
+        request = self.factory.get(
+            "/vince/auth/whoami/",
+            REMOTE_ADDR="127.0.0.1",
+            HTTP_X_FORWARDED_FOR="203.0.113.5",
+        )
+        request.user = user
+        response = whoami(request)
+        self.assertEqual(response.status_code, 403)
+
+    # ------------------------------------------------------------------
+    # Returns 401 when no auth is present in local+DEBUG mode.
     # ------------------------------------------------------------------
     def test_whoami_unauthenticated_returns_401(self):
         request = self.factory.get("/vince/auth/whoami/")
@@ -193,7 +241,7 @@ class WhoamiViewTest(TestCase):
         self.assertEqual(response.status_code, 401)
 
     # ------------------------------------------------------------------
-    # Returns 403 when DEBUG=False (endpoint must be unavailable in prod)
+    # Returns 403 when DEBUG=False (endpoint must be unavailable in prod).
     # ------------------------------------------------------------------
     @override_settings(DEBUG=False)
     def test_whoami_blocked_outside_debug(self):

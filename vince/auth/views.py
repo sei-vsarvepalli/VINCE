@@ -19,7 +19,8 @@
 """
 Lightweight debug/development endpoint for local auth mode.
 
-The ``whoami`` view is only active when ``settings.DEBUG`` is ``True``.
+The ``whoami`` view is only active when ``settings.DEBUG`` is ``True``
+**and** the request originates from localhost (127.0.0.1 or ::1).
 It is intended **solely** for local development and automated testing and
 must never be relied upon in production.
 
@@ -32,19 +33,44 @@ inside the adapter).
 from django.conf import settings
 from django.http import JsonResponse
 
+from lib.vince import utils as vinceutils
 from vince.auth.service import authenticate_request
+
+# IPs that are unconditionally treated as localhost.
+_LOOPBACK_IPS = {"127.0.0.1", "::1"}
+
+
+def _is_localhost(request):
+    """Return True when the resolved client IP is a loopback address.
+
+    ``get_ip()`` returns ``"Unknown"`` when neither ``X-Forwarded-For`` nor
+    ``REMOTE_ADDR`` is present (e.g. Django's ``RequestFactory`` in tests).
+    That case is also allowed so that unit tests that don't set network
+    metadata can still exercise the view.
+    """
+    ip = vinceutils.get_ip(request)
+    # Strip port suffix if present (e.g. "127.0.0.1:52000" from some test runners).
+    ip = ip.split(":")[0] if ":" in ip and not ip.startswith("::") else ip
+    return ip in _LOOPBACK_IPS or ip == "Unknown"
 
 
 def whoami(request):
     """
     Return JSON describing the currently authenticated user.
 
-    Responds with HTTP 403 when ``settings.DEBUG`` is ``False`` so the
-    endpoint cannot leak user information in production even if the URL
-    is accidentally reachable.
+    Access is restricted to:
+    * ``settings.DEBUG`` must be ``True``.
+    * The client IP (resolved via ``lib.vince.utils.get_ip``) must be a
+      loopback address (``127.0.0.1`` or ``::1``), or unresolvable
+      (``"Unknown"`` — test-runner / RequestFactory context).
+
+    Any other combination returns HTTP 403.
     """
     if not getattr(settings, "DEBUG", False):
         return JsonResponse({"error": "Not available outside DEBUG mode."}, status=403)
+
+    if not _is_localhost(request):
+        return JsonResponse({"error": "Only accessible from localhost."}, status=403)
 
     # In local mode, attempt header-based dev bootstrap if not already authed.
     user = request.user
